@@ -18,9 +18,9 @@ sqc = SQLContext(sc)
 
 # We start by creating the 3 RDDs from the different datasets from Amazon product reviews.
 # Note that it does not move the data at this stage due to the lazy evaluation nature.
-fashion = sc.textFile('data/fashion.json')
-electronics = sc.textFile('data/electronics.json')
-sports = sc.textFile('data/sports.json')
+fashion = sc.textFile('Data/Reviews/fashion.json')
+electronics = sc.textFile('Data/Reviews/electronics.json')
+sports = sc.textFile('Data/Reviews/sports.json')
 
 # Let's do some data exploration.
 print "fashion has {0} rows, electronics {1} rows and sports {2} rows".format(fashion.count(), electronics.count(), sports.count())
@@ -36,7 +36,7 @@ parsed_fashion = fashion.map(lambda x: json.loads(x))
 parsed_fashion.first()
 
 # Another way of loading files is by using a list of comma-separated file paths or a wildcard.
-data = sc.textFile('data/fashion.json,data/electronics.json,data/sports.json').map(lambda x: json.loads(x))
+data = sc.textFile('Data/Reviews/fashion.json,Data/Reviews/electronics.json,Data/Reviews/sports.json').map(lambda x: json.loads(x))
 
 # QUESTION: How many partitions does the rdd have?
 data.getNumPartitions()
@@ -136,6 +136,13 @@ nice_joined.map(lambda x: x['categories']).take(2)
 
 # QUESTION: if I run this, what will it print?
 print "AFTER"
+nice_joined.map(lambda x: get_first_category(x)).map(lambda x: x['categories']).take(2)
+
+# What if we cache nice_joined first?
+nice_joined.cache()
+nice_joined.count()
+
+print "AFTER CACHING"
 nice_joined.map(lambda x: get_first_category(x)).map(lambda x: x['categories']).take(2)
 
 #### PART 4: GroupByKey
@@ -240,11 +247,9 @@ REVIEWS_SCHEMA_DEF = StructType([
         StructField('helpful', ArrayType(
                 IntegerType(), True), 
             True),
-        StructField('summary', StringType(), True),
         StructField('reviewText', StringType(), True),
         StructField('reviewTime', StringType(), True),
-        StructField('overall', DoubleType(), True),
-        StructField('unixReviewTime', LongType(), True)
+        StructField('overall', DoubleType(), True)
     ])
 # View schema definition
 print REVIEWS_SCHEMA_DEF
