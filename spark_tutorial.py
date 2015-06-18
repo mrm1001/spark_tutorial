@@ -3,6 +3,14 @@ from math import exp
 from datetime import datetime
 import sklearn
 import pickle
+import re
+from pyspark.sql import SQLContext # You need SQL context
+from pyspark.sql.types import * # Export the type modules for schema
+from pyspark.sql import Row  
+
+
+# Instanciate SQL Context
+sqc = SQLContext(sc)
 
 ############################################# SPARK CORE #############################################
 
@@ -208,3 +216,250 @@ print "The joined rdd has {0} partitions and {1} rows".format(result.getNumParti
 model = pickle.load(open('data/classifier.pkl', 'r'))
 model_b = sc.broadcast(model)
 fashion.map(lambda x: eval(x)['reviewText']).map(lambda x: (x, model_b.value.predict([x])[0])).first()
+
+################################### Spark DataFrame API and Spark SQL ###################################
+
+#  Part 5 : Loading data to spark
+# We start by loading the files to spark
+# First, load them as text file to validate
+review_filepaths = 'Data/Reviews/*'
+textRDD = sc.textFile(review_filepaths)
+print 'number of reviews : {0}'.format(textRDD.count())
+print 'sample row : \n{0}'.format(textRDD.first())
+
+# You can let spark infer the schema of your DataFrame 
+inferredDF = sqc.jsonFile(review_filepaths)
+inferredDF.first()
+
+# Or you can programmatically tell spark how the schema looks like
+# Define Schema
+REVIEWS_SCHEMA_DEF = StructType([
+        StructField('reviewerID', StringType(), True),
+        StructField('asin', StringType(), True),
+        StructField('reviewerName', StringType(), True),
+        StructField('helpful', ArrayType(
+                IntegerType(), True), 
+            True),
+        StructField('summary', StringType(), True),
+        StructField('reviewText', StringType(), True),
+        StructField('reviewTime', StringType(), True),
+        StructField('overall', DoubleType(), True),
+        StructField('unixReviewTime', LongType(), True)
+    ])
+# View schema definition
+print REVIEWS_SCHEMA_DEF
+
+# Apply schema to data
+appliedDF = sqlContext.jsonFile(review_filepaths,schema=REVIEWS_SCHEMA_DEF)
+appliedDF.first()
+
+
+# Part 6: DataFrame Operations 
+
+# Spark DataFrame API allow you to do multiple operations on the Data. The primary advantage of using the DataFrame API is that you can do data transoformations with the high level API without having to use Python. Using the high level API has its advantages which will be explained later in the tutorial.
+
+# DataFrame API have functionality similar to that of Core RDD API. For example: 
+# + map                     : foreach, Select
+# + mapPartition            : foreachPartition
+# + filter                  : filter
+# + groupByKey, reduceByKey : groupBy 
+
+# 6.1 Selecting columns
+
+# You can use SELECT statement to select columns from your dataframe
+
+columnDF = appliedDF.select(appliedDF.asin,
+                            appliedDF.overall,
+                            appliedDF.reviewText,
+                            appliedDF.reviewerID,
+                            appliedDF.unixReviewTime)
+columnDF.show()
+
+# 6.2 Missing Values
+
+# Similar to Pandas, DataFrames come equipped with functions to address missing data.
+# + dropna function: can be used to remove observations with missing values
+# + fillna function: can be used to fill missing values with a default value
+
+# get null observations out
+densedDF=columnDF.dropna(subset=["overall"]).fillna(0.0,subset=["helpful"]) 
+densedDF.show()
+
+# 6.3 Filtering Rows
+
+# filter keywords allow you to filter rows in DFs
+filteredDF=
+# CODE WILL BE SHARED DURING THE TUTORIAL AS THIS IS PART OF AN EXERCISE
+
+# 6.5 group by 
+
+# Grouping is equivalent to the groupByKey in the core RDD API. You can transform the grouped values using a summary action such as:
+# + count
+# + sum
+# + average
+# + max and so on ...
+
+grouped = filteredDF.groupBy("overall").count()
+grouped.show()
+
+
+# 6.6 Joining DataFrames together
+
+# first, load the product dataset
+product_filepaths = 'Data/Products/*'
+productRDD = sc.textFile(product_filepaths)
+productRDD.first()
+
+# Load it as a dataframe
+# Load Dataset2 : Amazon Product information
+# First, define Schema for second Dataset
+PRODUCTS_SCHEMA_DEF = StructType([
+        StructField('asin', StringType(), True),
+        StructField('title', StringType(), True),
+        StructField('price', DoubleType(), True),
+        StructField('categories', ArrayType(ArrayType(
+            StringType(), True),True),True),
+        StructField('related', MapType(StringType(), ArrayType(
+                StringType(), True),True)),
+        StructField('imUrl', StringType(), True),
+        StructField('salesRank', MapType(StringType(), IntegerType(), True),True)
+    ])
+
+# Load the dataset
+productDF = sqc.jsonFile(product_filepaths,PRODUCTS_SCHEMA_DEF)
+# productDF.show()
+# productDF.first()
+
+"""
+*QUESTION*: What do you think will happen if we remove some fields from this schema?
+
+1. The schema fails
+2. The schema works fine
+
+ANSWER??? 
+
+Now lets join the two datasets
+"""
+
+enrichedReviews = filteredDF.join(productDF, productDF.asin==filteredDF.asin).dropna(subset="title")
+enrichedReviews.count()
+
+enrichedReviews.show()
+
+
+#  7. Saving your DataFrame
+# Now that we have done some operations on the data, we can save the file for later use. Standard data formats are a 
+# great way to opening up valuable data to your entire organization. Spark DataFrames can be saved in many different 
+# formats including and not limited to JSON, parquet, Hive and etc... 
+
+try:
+    columnDF.saveAsParquetFile('Data/Outputs/reviews_filtered.parquet')
+except:
+    pass
+
+print "Saved as parquet successfully"
+
+
+#  8. Using Spark SQL
+
+# Spark DataFrames also allow you to use Spark SQL to query from Petabytes of data. Spark comes with a SQL like query 
+# language which can be used to query from Distributed DataFrames. A key advantage of using Spark SQL is that the 
+# (https://databricks.com/blog/2015/04/13/deep-dive-into-spark-sqls-catalyst-optimizer.html) under the hood transforms
+#  your SQL query to run it most efficiently. 
+
+# Spark SQL can leverage the same functionality as the DataFrame API provides. In fact, it provides more functionality via SQL capabilities and HQL capabilities that are available to Spark SQL environment. 
+
+# For the sake of time constrains, I will explain different functions available in Spark SQL environment by using examples that use multiple functions. This will benefit by:
+# + Covering many functions that are possible via spark SQL
+# + Giving an understanding about how to pipe multiple functions together
+
+# Read the reviews parquet file
+reviewsDF = sqc.parquetFile('Data/Outputs/reviews_filtered.parquet')
+
+# Register the DataFrames to be used in sql
+reviewsDF.registerAsTable("reviews")
+productDF.registerAsTable("products")
+
+print 'There are {0} reviews about {1} products'.format(reviewsDF.count(),productDF.count())
+
+
+# NOW LET'S RUN A SQL QUERY
+
+sql_query = """SELECT reviews.asin, overall, reviewText, price
+            FROM reviews JOIN products ON  reviews.asin=products.asin
+            WHERE price > 50.00
+"""
+
+result = sqc.sql(sql_query)
+result.show()
+
+# User defined functions
+# Spark SQL also provides the functionality similar to User Defined Functions (UDF) offering in Hive. 
+# Spark uses registerFunction() function to register python functions in SQLContext.
+
+# user defined function
+def transform_review(review):
+    x1 = re.sub('[^0-9a-zA-Z\s]+','',review)
+    return [x1.lower()]
+
+# register table from above
+result.registerAsTable("result")
+
+# register function from above
+sqc.registerFunction("to_lowercase", lambda x:transform_review(x),returnType=ArrayType(StringType(), True))
+
+# use the registered function inside SQL 
+sql_query_transform = """SELECT asin, reviewText, to_lowercase(reviewText) as cleaned
+            FROM result
+"""
+
+result_transform = sqc.sql(sql_query_transform)
+result_transform.show()
+
+# FINALLY,  Mix and Match!!
+
+# You can also mix DataFrames, RDDs and SparkSQL to make it work for you. 
+
+# Scenario:
+# We want to investigate the average rating of reviews in terms of the categories they belong to. In order to do this, we:
+# + query the needed data using DataFrames API
+# + classify the reviews into different categories using core RDD API
+# + query the avearage rating for each category using Spark SQL
+
+# load classifier and broadcast it
+model = pickle.load(open('Data/classifiers/classifier.pkl', 'r'))
+classifier_b = sc.broadcast(model) 
+
+# DO CLASSIFICATION IN CORE RDD FORMAT
+# fashion.map(lambda x: eval(x)['reviewText']).map(lambda x: (x, model_b.value.predict([x])[0])).first()
+classifiedRDD = result_transform.map(lambda row: 
+                                     (row.asin,row.reviewText,str(classifier_b.value.predict(row.cleaned)[0]))
+                                    )
+
+classifiedRDD.first()
+
+# Transform the RDD into a DataFrame
+CLASSIFIED_SCHEMA = StructType([
+        StructField('asin', StringType(), True),
+        StructField('review', StringType(), True),
+        StructField('category', StringType(), True)
+    ])
+
+classifiedDF = sqc.createDataFrame(classifiedRDD,CLASSIFIED_SCHEMA)
+
+classifiedDF.show()
+
+# run a SQL query on the data
+classifiedDF.registerAsTable('enrichedReviews')
+
+sql_query_test = """SELECT category, avg(overall) as avgRating
+            FROM reviews 
+            JOIN products ON reviews.asin=products.asin 
+            JOIN enrichedReviews ON products.asin=enrichedReviews.asin
+            WHERE price > 50.0
+            GROUP BY enrichedReviews.category
+"""
+
+resultTest = sqc.sql(sql_query_test)
+resultTest.show()
+
