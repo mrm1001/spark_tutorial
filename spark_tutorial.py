@@ -22,6 +22,12 @@ fashion = sc.textFile('Data/Reviews/fashion.json')
 electronics = sc.textFile('Data/Reviews/electronics.json')
 sports = sc.textFile('Data/Reviews/sports.json')
 
+# Example of a basic transformation
+print "Result 1: ", fashion.map(lambda x: len(x))
+
+# Example of an action:
+print "Result 2: ", fashion.count()
+
 # Let's do some data exploration.
 print "fashion has {0} rows, electronics {1} rows and sports {2} rows".format(fashion.count(), electronics.count(), sports.count())
 print "fashion first row:"
@@ -50,7 +56,8 @@ indexed_data.collect()
 
 #### PART 2: Reducers
 
-#The next thing we have been tasked to do is to get the total number of reviews per product.
+# The next thing we have been tasked to do is to get the minimum and maximum number of reviews per product.
+
 product_num = data.map(lambda x: (x['asin'], 1)).reduceByKey(lambda x,y: x+y)
 # The rdd product_num will contain (product_asin, total_number_reviews)
 
@@ -74,7 +81,7 @@ def flatten_categories(line):
     line['categories'] = [item for sublist in old_cats for item in sublist]
     return line
 
-product_metadata = product_metadata.map(lambda x: flatten_categories(x))
+product_metadata = product_metadata.map(flatten_categories)
 print product_metadata.first()
 
 # We want to join the review data to the metadata about the product.
@@ -93,14 +100,15 @@ print "number partitions key_val_metadata: ",
 print key_val_metadata.getNumPartitions()
 joined = key_val_data.join(key_val_metadata)
 
+key, (review, product) = joined.first()
+print "For key {0}:\n\nthe review is {1}\n\nthe product metadata is {2}.\n".format(key, review, product)
+
 # What is the number of output partitions of the join? To understand this,
 # the best is to refer back to the Pyspark source code:
 # https://github.com/apache/spark/blob/branch-1.3/python/pyspark/join.py
 
 # QUESTION: what is the number of partitions in joined?
 print "This RDD has {0} partitions.".format(joined.getNumPartitions())
-
-joined.take(2)
 
 # To make it easier to manipulate, we will change the structure of the joined rdd to be a single dictionary.
 def merge_dictionaries(metadata_line, review_line):
@@ -109,78 +117,44 @@ def merge_dictionaries(metadata_line, review_line):
     return new_dict
 
 nice_joined = joined.map(lambda x: merge_dictionaries(x[1][0], x[1][1]))
-nice_joined.first()
+row0, row1 = nice_joined.take(2)
 
-# A couple of questions to probe your understanding of Spark
-# Testing Spark understanding
-# QUESTION: if I run this, what will be the title of the first row?
-def change_title(line):
-    line['title'] = 'this is the title'
-    return line
-
-categories = nice_joined.map(lambda x: change_title(x))
-
-# ANSWER:
-print categories.map(lambda x: x['title']).first()
-
-# QUESTION: if I run this, what will be the title of the first row?
-nice_joined.map(lambda x: x['title']).first()
-
-def get_first_category(line):
-    line['categories'] = line['categories'][0]
-    return line
-
-print "BEFORE"
-print "the categories in the first 2 fields are: "
-nice_joined.map(lambda x: x['categories']).take(2)
-
-# QUESTION: if I run this, what will it print?
-print "AFTER"
-nice_joined.map(lambda x: get_first_category(x)).map(lambda x: x['categories']).take(2)
-
-# What if we cache nice_joined first?
-nice_joined.cache()
-nice_joined.count()
-
-print "AFTER CACHING"
-nice_joined.map(lambda x: get_first_category(x)).map(lambda x: x['categories']).take(2)
+print "row 0:\n\n{0}\n\nrow 1:\n\n{1}\n".format(row0, row1)
 
 #### PART 4: GroupByKey
 
 # Now that we have joined two data sources, we can start doing some ad-hoc analysis of the data!
-# Let's start by counting the number of reviews per category. The categories are encoded as a list of categories,
-# so we need to count 1 for each 'sub-category'.
-# We want to get the distinct number of categories
-all_categories = nice_joined.flatMap(lambda x: x['categories'])
-print "all_categories.take(5): ",
-print all_categories.take(5)
-num_categories = all_categories.distinct().count()
-print
+# Now the task is to get the average product review length for each category. The categories are encoded as a list of
+# categories, so we first need to 'flatten them out'.
 
-print "There are {0} categories.".format(num_categories)
+nice_joined.cache()
+nice_joined.count()
 
-# We are going to take the categories in each review and count them as being reviewed once.
-category_count = nice_joined.flatMap(lambda x: [(y,1) for y in x['categories']])
-category_total_count = category_count.reduceByKey(lambda x,y: x+y)
-print category_total_count.take(10)
+original_categories = nice_joined.map(lambda x: x['categories'])
+flat_categories = nice_joined.flatMap(lambda x: x['categories'])
 
-sorted_categories = sorted(category_total_count.collect(), key=lambda x: x[1], reverse=True)
-print "The top 5 categories are:"
-print sorted_categories[:5]
+print "original_categories.take(5):\n"
+print '\n'.join([str(x) for x in original_categories.take(5)]) + '\n'
 
-# Next, we have been tasked to get the average product review length for each category.
-# We can solve this using groupByKey!
+print "flat_categories.take(5):\n"
+print '\n'.join([str(x) for x in flat_categories.take(5)]) + '\n'
+
+num_categories = flat_categories.distinct().count()
+print "There are {0} distinct categories.".format(num_categories)
+
+# Next, in order to get the average review length across all categories, we will use a new function: groupByKey!
+
 category_review = nice_joined.flatMap(lambda x: [(y, len(x['reviewText'])) for y in x['categories']])
-print "category_review.first(): " + str(category_review.first())
+print "After the flatMap: " + str(category_review.first())
+print "After the groupByKey: " + str(category_review.groupByKey().map(lambda x: (x[0], list(x[1]))).first())
 print
 
 grouped_category_review = category_review.groupByKey().map(lambda x: (x[0], sum(x[1])/float(len(x[1]))))
-print "grouped_category_review.first(): " + str(grouped_category_review.first())
-print
+print "grouped_category_review.first(): " + str(grouped_category_review.first()) + '\n'
 
 ### Now we can sort the categories by average product review length
-print "The top 10 categories are: " + str(sorted(grouped_category_review.collect(),
-                                                 key=lambda x: x[1], reverse=True)[:10])
+print "The top 10 categories are: " + str(sorted(grouped_category_review.collect(), key=lambda x: x[1], reverse=True)[:10])
+
 # EXERCISE: Do the same thing, but this time you are not allowed to use groupByKey()!
 
 #### Optional: Data skewness
