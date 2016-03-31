@@ -10,7 +10,7 @@ from pyspark.sql import Row
 
 
 # Instanciate SQL Context
-sqc = SQLContext(sc)
+sqlContext = SQLContext(sc)
 
 ############################################# SPARK CORE #############################################
 
@@ -209,7 +209,7 @@ print 'number of reviews : {0}'.format(textRDD.count())
 print 'sample row : \n{0}'.format(textRDD.first())
 
 # You can let spark infer the schema of your DataFrame 
-inferredDF = sqc.jsonFile(review_filepaths)
+inferredDF = sqlContext.read.json(review_filepaths)
 inferredDF.first()
 
 # Or you can programmatically tell spark how the schema looks like
@@ -229,7 +229,7 @@ REVIEWS_SCHEMA_DEF = StructType([
 print REVIEWS_SCHEMA_DEF
 
 # Apply schema to data
-appliedDF = sqlContext.jsonFile(review_filepaths,schema=REVIEWS_SCHEMA_DEF)
+appliedDF = sqlContext.read.json(review_filepaths,schema=REVIEWS_SCHEMA_DEF)
 appliedDF.first()
 
 
@@ -267,7 +267,8 @@ densedDF.show()
 # 6.3 Filtering Rows
 
 # filter keywords allow you to filter rows in DFs
-filteredDF=
+filteredDF=densedDF.filter(densedDF.overall>=3)
+filteredDF.show()
 # CODE WILL BE SHARED DURING THE TUTORIAL AS THIS IS PART OF AN EXERCISE
 
 # 6.5 group by 
@@ -305,7 +306,7 @@ PRODUCTS_SCHEMA_DEF = StructType([
     ])
 
 # Load the dataset
-productDF = sqc.jsonFile(product_filepaths,PRODUCTS_SCHEMA_DEF)
+productDF = sqlContext.read.json(product_filepaths,PRODUCTS_SCHEMA_DEF)
 # productDF.show()
 # productDF.first()
 
@@ -332,7 +333,7 @@ enrichedReviews.show()
 # formats including and not limited to JSON, parquet, Hive and etc... 
 
 try:
-    columnDF.saveAsParquetFile('Data/Outputs/reviews_filtered.parquet')
+    columnDF.write.parquet('Data/Outputs/reviews_filtered.parquet')
 except:
     pass
 
@@ -353,7 +354,7 @@ print "Saved as parquet successfully"
 # + Giving an understanding about how to pipe multiple functions together
 
 # Read the reviews parquet file
-reviewsDF = sqc.parquetFile('Data/Outputs/reviews_filtered.parquet')
+reviewsDF = sqlContext.read.parquet('Data/Outputs/reviews_filtered.parquet')
 
 # Register the DataFrames to be used in sql
 reviewsDF.registerAsTable("reviews")
@@ -369,7 +370,7 @@ sql_query = """SELECT reviews.asin, overall, reviewText, price
             WHERE price > 50.00
 """
 
-result = sqc.sql(sql_query)
+result = sqlContext.sql(sql_query)
 result.show()
 
 # User defined functions
@@ -379,20 +380,20 @@ result.show()
 # user defined function
 def transform_review(review):
     x1 = re.sub('[^0-9a-zA-Z\s]+','',review)
-    return [x1.lower()]
+    return x1.lower()
 
 # register table from above
 result.registerAsTable("result")
 
 # register function from above
-sqc.registerFunction("to_lowercase", lambda x:transform_review(x),returnType=ArrayType(StringType(), True))
+sqlContext.registerFunction("to_lowercase", lambda x:transform_review(x),returnType=ArrayType(StringType(), True))
 
 # use the registered function inside SQL 
 sql_query_transform = """SELECT asin, reviewText, to_lowercase(reviewText) as cleaned
             FROM result
 """
 
-result_transform = sqc.sql(sql_query_transform)
+result_transform = sqlContext.sql(sql_query_transform)
 result_transform.show()
 
 # FINALLY,  Mix and Match!!
@@ -424,7 +425,7 @@ CLASSIFIED_SCHEMA = StructType([
         StructField('category', StringType(), True)
     ])
 
-classifiedDF = sqc.createDataFrame(classifiedRDD,CLASSIFIED_SCHEMA)
+classifiedDF = sqlContext.createDataFrame(classifiedRDD,CLASSIFIED_SCHEMA)
 
 classifiedDF.show()
 
@@ -439,7 +440,7 @@ sql_query_test = """SELECT category, avg(overall) as avgRating
             GROUP BY enrichedReviews.category
 """
 
-resultTest = sqc.sql(sql_query_test)
+resultTest = sqlContext.sql(sql_query_test)
 resultTest.show()
 
 
